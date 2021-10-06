@@ -16,30 +16,7 @@ exports.scheduledFunction = functions.pubsub.schedule('0 0 * * *')
             .get()
             .then(snapshot => {
                 if(snapshot.size > 0) {
-                    snapshot.forEach(doc => {
-                        console.log(doc.id, "=>", doc.data().name);
-
-                        admin.firestore()
-                                .collection('featured')
-                                .doc('nade')
-                                .set(doc.data())
-
-                        console.log("map: ", doc.data().map.toLowerCase());
-                        
-                        admin.firestore()
-                            .collection('maps')
-                            .where('name', '==', doc.data().map)
-                            .limit(1)
-                            .get()
-                            .then(snapshot => {
-                                snapshot.forEach(doc => {
-                                    admin.firestore()
-                                        .collection('featured')
-                                        .doc('map')
-                                        .set(doc.data())
-                                });
-                            })
-                    });
+                    saveFeatured(snapshot);
                 } else {
                     admin.firestore()
                         .collection('nades')
@@ -47,36 +24,83 @@ exports.scheduledFunction = functions.pubsub.schedule('0 0 * * *')
                         .limit(1)
                         .get()
                         .then(snapshot => {
-                            snapshot.forEach(doc => {
-                                console.log(doc.id, "=>", doc.data().name);
-
-                                admin.firestore()
-                                    .collection('featured')
-                                    .doc('nade')
-                                    .set(doc.data())
-
-                                console.log("map: ", doc.data().map.toLowerCase());
-
-                                admin.firestore()
-                                    .collection('maps')
-                                    .where('name', '==', doc.data().map)
-                                    .limit(1)
-                                    .get()
-                                    .then(snapshot => {
-                                        snapshot.forEach(doc => {
-                                            admin.firestore()
-                                                .collection('featured')
-                                                .doc('map')
-                                                .set(doc.data())
-                                        });
-                                    })
-                            });
+                            saveFeatured(snapshot);
                         })
                 }
             })
-
         return null;
       });
+
+function saveFeatured(snapshot) {
+
+    snapshot.forEach(doc => {
+        console.log(doc.id, "=>", doc.data().name);
+
+        const nadeReference = admin.firestore().collection('nades').doc(doc.id);
+
+        admin.firestore()
+            .collection('featured')
+            .doc('nade')
+            .set({
+                'reference': nadeReference
+            })
+
+        console.log("map: ", doc.data().map.toLowerCase());
+                
+        admin.firestore()
+            .collection('maps')
+            .where('name', '==', doc.data().map)
+            .limit(1)
+            .get()
+            .then(mapSnapshot => {
+                mapSnapshot.forEach(mapDoc => {
+                    const mapReference = admin.firestore().collection('maps').doc(mapDoc.id);
+
+                    admin.firestore()
+                        .collection('featured')
+                        .doc('map')
+                        .set({
+                            'reference': mapReference
+                        })
+                });
+            })
+    });
+}
+
+// Daily function to send a push notification
+// to subscribed users with the Featured nade
+exports.featuredNotification = functions.pubsub.schedule('0 8 * * *')
+    .timeZone('Europe/London')
+    .onRun((context) => {
+        admin.firestore()
+            .collection('featured')
+            .doc('nade')
+            .get()
+            .then(snapshot => {
+                snapshot.data().reference
+                    .get()
+                    .then(doc => {
+                        sendFeaturedNotification(doc.data().name, doc.data().map, doc.data().thumbnail);
+                    })
+            })
+        return null;
+    });
+
+function sendFeaturedNotification(nade, map, thumbnail) {
+
+    const topic = "popflashFeatured";
+    const payload = {
+        notification: {
+          title: 'Popflash',
+          body: `Featured: ${map}, ${nade}.`,
+          sound: 'default',
+          image: `${thumbnail}`
+        }
+      };
+
+    admin.messaging().sendToTopic(topic, payload);
+
+}
 
 exports.updateMapLatestDoc = functions.firestore.document('nades/{wildcard}')
     .onCreate((snapshot, context) => {
@@ -109,26 +133,5 @@ exports.updateMapLatestDoc = functions.firestore.document('nades/{wildcard}')
                         .set({lastAdded: formattedDate}, {merge: true})
                 });
             })
-
         return null;
-    });
-
-exports.createUserFavourites = functions.firestore.document('users/{uid}')
-    .onCreate((userSnapshot, context) => {
-        admin.firestore()
-            .collection('maps')
-            .get()
-            .then(mapSnapshot => {
-                mapSnapshot.forEach(doc => {
-                    admin.firestore()
-                        .collection('users')
-                        .doc(context.params.uid)
-                        .collection('maps')
-                        .doc(doc.id)
-                        .set(Object.assign({}, doc.data(), {favourite: false, position: 0}))
-                });
-            })
-
-        return null;
-
     });
